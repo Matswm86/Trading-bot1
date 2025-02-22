@@ -1,3 +1,5 @@
-```python
+python
 import backtrader as bt
-from strategy import AdvancedTradingStrategy
+import pandas as pd
+import os
+from strategy import AdvancedTradingStrategy 
