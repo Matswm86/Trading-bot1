@@ -1,0 +1,379 @@
+import pandas as pd
+import numpy as np
+import talib
+from typing import Dict, List, Tuple
+
+class AdvancedTradingStrategy:
+    def __init__(self, 
+                 higher_timeframe_data: pd.DataFrame,
+                 lower_timeframe_data: pd.DataFrame,
+                 rr_ratio: float = 2.0,
+                 rsi_period: int = 14,
+                 volume_threshold: float = 1.5):
+        """
+        Initialize the trading strategy with required parameters
+        
+        Args:
+            higher_timeframe_data: H4/H1 timeframe data
+            lower_timeframe_data: M15/M5 timeframe data
+            rr_ratio: Risk-Reward ratio (default 1:2)
+            rsi_period: Period for RSI calculation
+            volume_threshold: Multiplier for average volume to identify significant zones
+        """
+        self.htf_data = higher_timeframe_data
+        self.ltf_data = lower_timeframe_data
+        self.rr_ratio = rr_ratio
+        self.rsi_period = rsi_period
+        self.volume_threshold = volume_threshold
+        
+    def identify_market_structure(self) -> Dict[str, List[float]]:
+        """
+        Identify Break of Structure (BOS) and Change of Character (CHOCH)
+        
+        Returns:
+            Dictionary containing BOS and CHOCH levels
+        """
+        def calculate_swing_points(data: pd.DataFrame, window: int = 5) -> Tuple[List[float], List[float]]:
+            highs = []
+            lows = []
+            
+            for i in range(window, len(data) - window):
+                if all(data['High'][i] > data['High'][i-window:i]) and \
+                   all(data['High'][i] > data['High'][i+1:i+window+1]):
+                    highs.append(data['High'][i])
+                    
+                if all(data['Low'][i] < data['Low'][i-window:i]) and \
+                   all(data['Low'][i] < data['Low'][i+1:i+window+1]):
+                    lows.append(data['Low'][i])
+                    
+            return highs, lows
+        
+        htf_highs, htf_lows = calculate_swing_points(self.htf_data)
+        
+        # Identify BOS levels
+        bos_levels = []
+        for i in range(1, len(htf_highs)):
+            if htf_highs[i] > htf_highs[i-1]:
+                bos_levels.append(htf_highs[i])
+                
+        # Identify CHOCH levels
+        choch_levels = []
+        for i in range(1, len(htf_lows)):
+            if htf_lows[i] < htf_lows[i-1]:
+                choch_levels.append(htf_lows[i])
+                
+        return {
+            'bos': bos_levels,
+            'choch': choch_levels
+        }
+    
+    def identify_supply_demand_zones(self) -> Dict[str, List[Dict]]:
+        """
+        Identify Supply and Demand zones using volume and price action
+        
+        Returns:
+            Dictionary containing supply and demand zones with their characteristics
+        """
+        zones = {'supply': [], 'demand': []}
+        
+        # Calculate average volume
+        avg_volume = self.ltf_data['Volume'].mean()
+        
+        for i in range(1, len(self.ltf_data) - 1):
+            # Supply zone identification
+            if (self.ltf_data['High'][i] > self.ltf_data['High'][i-1]) and \
+               (self.ltf_data['High'][i] > self.ltf_data['High'][i+1]) and \
+               (self.ltf_data['Volume'][i] > avg_volume * self.volume_threshold):
+                
+                zones['supply'].append({
+                    'price': self.ltf_data['High'][i],
+                    'volume': self.ltf_data['Volume'][i],
+                    'strength': self.calculate_zone_strength(i, 'supply')
+                })
+                
+            # Demand zone identification
+            if (self.ltf_data['Low'][i] < self.ltf_data['Low'][i-1]) and \
+               (self.ltf_data['Low'][i] < self.ltf_data['Low'][i+1]) and \
+               (self.ltf_data['Volume'][i] > avg_volume * self.volume_threshold):
+                
+                zones['demand'].append({
+                    'price': self.ltf_data['Low'][i],
+                    'volume': self.ltf_data['Volume'][i],
+                    'strength': self.calculate_zone_strength(i, 'demand')
+                })
+                
+        return zones
+    
+    def calculate_zone_strength(self, index: int, zone_type: str) -> float:
+        """
+        Calculate the strength of a supply/demand zone based on multiple factors
+        
+        Args:
+            index: Index of the zone in the dataframe
+            zone_type: Type of zone ('supply' or 'demand')
+            
+        Returns:
+            Strength score between 0 and 1
+        """
+        # Volume factor
+        volume_score = self.ltf_data['Volume'][index] / self.ltf_data['Volume'].mean()
+        
+        # Price movement factor
+        if zone_type == 'supply':
+            price_move = (self.ltf_data['High'][index] - self.ltf_data['Low'][index]) / \
+                        self.ltf_data['Low'][index]
+        else:
+            price_move = (self.ltf_data['High'][index] - self.ltf_data['Low'][index]) / \
+                        self.ltf_data['High'][index]
+        
+        # Time factor (more recent zones are stronger)
+        time_factor = 1 - (len(self.ltf_data) - index) / len(self.ltf_data)
+        
+        return (volume_score * 0.4 + price_move * 0.4 + time_factor * 0.2)
+    
+    def check_momentum(self, lookback: int = 14) -> Dict[str, float]:
+        """
+        Check momentum conditions using RSI and other indicators
+        
+        Args:
+            lookback: Period for momentum calculations
+            
+        Returns:
+            Dictionary containing momentum indicators
+        """
+        # Calculate RSI
+        rsi = talib.RSI(self.ltf_data['Close'], timeperiod=self.rsi_period)
+        
+        # Calculate Stochastic
+        slowk, slowd = talib.STOCH(self.ltf_data['High'], 
+                                  self.ltf_data['Low'], 
+                                  self.ltf_data['Close'],
+                                  fastk_period=14,
+                                  slowk_period=3,
+                                  slowk_matype=0,
+                                  slowd_period=3,
+                                  slowd_matype=0)
+        
+        # Calculate Momentum
+        momentum = talib.MOM(self.ltf_data['Close'], timeperiod=lookback)
+        
+        return {
+            'rsi': rsi[-1],
+            'stoch_k': slowk[-1],
+            'stoch_d': slowd[-1],
+            'momentum': momentum[-1]
+        }
+    
+    def identify_entry_triggers(self) -> List[Dict]:
+        """
+        Identify valid entry triggers based on specified criteria
+        
+        Returns:
+            List of potential entry points with their characteristics
+        """
+        triggers = []
+        
+        for i in range(2, len(self.ltf_data) - 1):
+            # Check for engulfing patterns
+            if self.is_bullish_engulfing(i):
+                triggers.append({
+                    'type': 'bullish_engulfing',
+                    'index': i,
+                    'price': self.ltf_data['Close'][i],
+                    'strength': self.calculate_trigger_strength(i, 'bullish')
+                })
+            elif self.is_bearish_engulfing(i):
+                triggers.append({
+                    'type': 'bearish_engulfing',
+                    'index': i,
+                    'price': self.ltf_data['Close'][i],
+                    'strength': self.calculate_trigger_strength(i, 'bearish')
+                })
+                
+            # Check for V-shape reversals
+            if self.is_v_shape_reversal(i):
+                triggers.append({
+                    'type': 'v_shape',
+                    'index': i,
+                    'price': self.ltf_data['Close'][i],
+                    'strength': self.calculate_trigger_strength(i, 'v_shape')
+                })
+                
+        return triggers
+    
+    def is_bullish_engulfing(self, index: int) -> bool:
+        """Check for bullish engulfing pattern"""
+        return (self.ltf_data['Close'][index] > self.ltf_data['Open'][index-1]) and \
+               (self.ltf_data['Open'][index] < self.ltf_data['Close'][index-1]) and \
+               (self.ltf_data['Close'][index] > self.ltf_data['Open'][index])
+    
+    def is_bearish_engulfing(self, index: int) -> bool:
+        """Check for bearish engulfing pattern"""
+        return (self.ltf_data['Close'][index] < self.ltf_data['Open'][index-1]) and \
+               (self.ltf_data['Open'][index] > self.ltf_data['Close'][index-1]) and \
+               (self.ltf_data['Close'][index] < self.ltf_data['Open'][index])
+    
+    def is_v_shape_reversal(self, index: int, lookback: int = 5) -> bool:
+        """Check for V-shape reversal pattern"""
+        if index < lookback:
+            return False
+            
+        prices = self.ltf_data['Close'][index-lookback:index+1]
+        return (prices.iloc[0] > prices.iloc[lookback//2]) and \
+               (prices.iloc[-1] > prices.iloc[lookback//2])
+    
+    def calculate_trigger_strength(self, index: int, trigger_type: str) -> float:
+        """
+        Calculate the strength of an entry trigger
+        
+        Args:
+            index: Index of the trigger in the dataframe
+            trigger_type: Type of trigger pattern
+            
+        Returns:
+            Strength score between 0 and 1
+        """
+        # Volume factor
+        volume_score = self.ltf_data['Volume'][index] / self.ltf_data['Volume'].mean()
+        
+        # Price movement factor
+        price_move = abs(self.ltf_data['Close'][index] - self.ltf_data['Open'][index]) / \
+                    self.ltf_data['Open'][index]
+        
+        # Momentum alignment
+        momentum = self.check_momentum()
+        momentum_alignment = 1.0
+        
+        if trigger_type == 'bullish':
+            momentum_alignment = 1.0 if momentum['rsi'] < 30 else 0.5
+        elif trigger_type == 'bearish':
+            momentum_alignment = 1.0 if momentum['rsi'] > 70 else 0.5
+            
+        return (volume_score * 0.3 + price_move * 0.4 + momentum_alignment * 0.3)
+    
+    def calculate_target_price(self, entry_price: float, direction: str) -> float:
+        """
+        Calculate target price based on risk-reward ratio and liquidity pools
+        
+        Args:
+            entry_price: Entry price level
+            direction: Trade direction ('long' or 'short')
+            
+        Returns:
+            Target price level
+        """
+        # Find nearest significant liquidity pool
+        if direction == 'long':
+            # Look for resistance levels above entry
+            potential_targets = [level for level in self.identify_market_structure()['bos'] 
+                               if level > entry_price]
+            if potential_targets:
+                nearest_target = min(potential_targets)
+                risk = abs(entry_price - self.calculate_stop_loss(entry_price, direction))
+                min_target = entry_price + (risk * self.rr_ratio)
+                return max(nearest_target, min_target)
+        else:
+            # Look for support levels below entry
+            potential_targets = [level for level in self.identify_market_structure()['choch'] 
+                               if level < entry_price]
+            if potential_targets:
+                nearest_target = max(potential_targets)
+                risk = abs(entry_price - self.calculate_stop_loss(entry_price, direction))
+                min_target = entry_price - (risk * self.rr_ratio)
+                return min(nearest_target, min_target)
+                
+        # Default to RR-based target if no suitable liquidity pools found
+        risk = abs(entry_price - self.calculate_stop_loss(entry_price, direction))
+        return entry_price + (risk * self.rr_ratio) if direction == 'long' else \
+               entry_price - (risk * self.rr_ratio)
+    
+    def calculate_stop_loss(self, entry_price: float, direction: str) -> float:
+        """
+        Calculate stop loss level based on supply/demand zones
+        
+        Args:
+            entry_price: Entry price level
+            direction: Trade direction ('long' or 'short')
+            
+        Returns:
+            Stop loss price level
+        """
+        zones = self.identify_supply_demand_zones()
+        
+        if direction == 'long':
+            # Find nearest demand zone below entry
+            demand_levels = [zone['price'] for zone in zones['demand'] 
+                           if zone['price'] < entry_price]
+            if demand_levels:
+                return max(demand_levels) * 0.995  # Additional buffer
+        else:
+            # Find nearest supply zone above entry
+            supply_levels = [zone['price'] for zone in zones['supply'] 
+                           if zone['price'] > entry_price]
+            if supply_levels:
+                return min(supply_levels) * 1.005  # Additional buffer
+                
+        # Default to 2% stop loss if no suitable zones found
+        return entry_price * 0.98 if direction == 'long' else entry_price * 1.02
+    
+    def execute_trade(self, current_price: float) -> Dict:
+        """
+        Execute trading strategy based on all conditions
+        
+        Args:
+            current_price: Current market price
+            
+        Returns:
+            Trade execution details if conditions are met, None otherwise
+        """
+        # Check market structure
+        market_structure = self.identify_market_structure()
+        
+        # Check supply/demand zones
+        zones = self.identify_supply_demand_zones()
+        
+        # Check momentum
+        momentum = self.check_momentum()
+        
+        # Check entry triggers
+        triggers = self.identify_entry_triggers()
+        
+        # Evaluate trading opportunity
+        for trigger in triggers:
+            if trigger['strength'] > 0.7:  # Strong trigger
+                if current_price > trigger['price']:  # Potential long setup
+                    if momentum['rsi'] < 30 and \
+                       any(zone['price'] < current_price for zone in zones['demand']):
+                        
+                        stop_loss = self.calculate_stop_loss(current_price, 'long')
+                        target_price = self.calculate_target_price(current_price, 'long')
+                        
+                        return {
+                            'direction': 'long',
+                            'entry_price': current_price,
+                            'stop_loss': stop_loss,
+                            'target_price': target_price,
+                            'risk_reward': (target_price - current_price) / (current_price - stop_loss),
+                            'trigger': trigger['type'],
+                            'momentum': momentum
+                        }
+                
+                elif current_price < trigger['price']:  # Potential short setup
+                    if momentum['rsi'] > 70 and \
+                       any(zone['price'] > current_price for zone in zones['supply']):
+                        
+                        stop_loss = self.calculate_stop_loss(current_price, 'short')
+                        target_price = self.calculate_target_price(current_price, 'short')
+                        
+                        return {
+                            'direction': 'short',
+                            'entry_price': current_price,
+                            'stop_loss': stop_loss,
+                            'target_price': target_price,
+                            'risk_reward': (current_price - target_price) / (stop_loss - current_price),
+                            'trigger': trigger['type'],
+                            'momentum': momentum
+                        }
+        
+        # No trade opportunity found
+        return None
