@@ -21,7 +21,7 @@ class CSVDataFeed(bt.feeds.GenericCSVData):
 # Main function to run the backtest
 def run_backtest():
     # Create a Cerebro engine instance
-    cerebro = bt.Cerebro()
+    cerebro = bt.Cerebro(exactbars=True)
 
     # Add your strategy
     cerebro.addstrategy(AdvancedTradingStrategy)
