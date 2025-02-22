@@ -28,11 +28,11 @@ def run_backtest():
 
     # Load all CSV files from the GitHub repository
     csv_files = [
-        'data/file1.csv',  # Replace with actual file paths
-        'data/file2.csv',
-        'data/file3.csv',
-        'data/file4.csv',
-        'data/file5.csv',
+        'Trading-bot1/data1.csv',  # Replace with actual file paths
+        'Trading-bot1/data2.csv',
+        'Trading-bot1/data3.csv',
+        'Trading-bot1/data4.csv',
+        'Trading-bot1/data5.csv',
     ]
 
     for file in csv_files:
